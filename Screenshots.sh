@@ -1,47 +1,73 @@
 #!/bin/zsh
-# MacOS by Default saves Screenshots to the Desktop, over time this can get quite cluttered
-# This script moves monitors Desktop Folder (Not Subfolders) for any Screenshots and moves them to a Folder under `Pictures/Screenshots/<CurrentYear-CurrentMonth>`
+# Monitors the Desktop (top-level only) for macOS screenshots and moves them
+# to ~/Pictures/Screenshots/<Year>-<Month>/
 
-# Folder path for screenshots
-currentYear=$(date +"%Y")
-currentMonth=$(date +"%B")
-screenshotsFolder="$HOME/Pictures/Screenshots/$currentYear-$currentMonth"
+_screenshots_folder() {
+    echo "$HOME/Pictures/Screenshots/$(date +"%Y-%B")"
+}
 
-# Ensure the folder exists
-if [ ! -d "$screenshotsFolder" ]; then
-    mkdir -p "$screenshotsFolder"
-    if [ $? -ne 0 ]; then
-        osascript -e "display notification \"Could not create $screenshotsFolder\" with title \"Failed to Create Folder\""
-        exit 1
-    fi
-fi
-
-# Function to move screenshots
-move_screenshot() {
-    local filePath="$1"
-    local fileName=$(basename "$filePath")
-    
-    if [[ "$fileName" == Screenshot* ]]; then
-        local destinationPath="$screenshotsFolder/$fileName"
-        mv "$filePath" "$destinationPath"
-        if [ $? -eq 0 ]; then
-            osascript -e "display notification \"Moved: $fileName to $destinationPath\" with title \"File Moved Successfully\""
-        else
-            osascript -e "display notification \"Could not move $fileName to $screenshotsFolder\" with title \"Failed to Move File\""
+_ensure_folder() {
+    local folder="$1"
+    if [[ ! -d "$folder" ]]; then
+        if ! mkdir -p "$folder"; then
+            osascript -e "display notification \"Could not create $folder\" with title \"Screenshot Mover: Error\""
+            return 1
         fi
     fi
 }
 
-# Monitor Desktop for new files
-function monitor_desktop {
-    while true; do
-        for file in "$HOME/Desktop/"*; do
-            if [ -f "$file" ]; then
-                move_screenshot "$file"
+move_screenshot() {
+    local filePath="$1"
+    local fileName="${filePath:t}"
+
+    [[ -f "$filePath" ]] || return 0
+    [[ "$fileName" == Screenshot* ]] || return 0
+
+    local destFolder
+    destFolder="$(_screenshots_folder)"
+    _ensure_folder "$destFolder" || return 1
+
+    local destPath="$destFolder/$fileName"
+
+    # Avoid overwriting an existing file — append a counter suffix
+    if [[ -e "$destPath" ]]; then
+        local base="${fileName:r}"
+        local ext="${fileName:e}"
+        local counter=1
+        local candidate
+        while true; do
+            if [[ -n "$ext" ]]; then
+                candidate="$destFolder/${base}_${counter}.${ext}"
+            else
+                candidate="$destFolder/${base}_${counter}"
             fi
+            [[ -e "$candidate" ]] || break
+            (( counter++ ))
         done
-        sleep 2  # Adjust the sleep duration as needed
-    done
+        destPath="$candidate"
+    fi
+
+    if mv "$filePath" "$destPath" 2>/dev/null; then
+        osascript -e "display notification \"Moved: ${destPath:t}\" with title \"Screenshot Moved\""
+    elif [[ -f "$filePath" ]]; then
+        osascript -e "display notification \"Could not move $fileName\" with title \"Screenshot Mover: Error\""
+    fi
 }
 
-monitor_desktop
+if ! command -v fswatch &>/dev/null; then
+    echo "fswatch not found. Install with: brew install fswatch" >&2
+    exit 1
+fi
+
+trap 'echo "\nStopped."; exit 0' INT TERM
+
+# Move any screenshots already on the Desktop before we start watching
+echo "Scanning ~/Desktop for existing screenshots…"
+for file in "$HOME/Desktop/"*(N.); do
+    move_screenshot "$file"
+done
+
+echo "Watching ~/Desktop for screenshots…"
+fswatch -0 "$HOME/Desktop" | while IFS= read -r -d '' filePath; do
+    move_screenshot "$filePath"
+done
