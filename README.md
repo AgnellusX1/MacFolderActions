@@ -37,12 +37,23 @@ To uninstall:
 - Creates the destination folder if it does not exist — re-evaluated on every move, so month rollovers are handled correctly
 - If a file with the same name already exists at the destination, appends a counter suffix (`Screenshot … _1.png`, `_2.png`, …) instead of overwriting
 - Shows a macOS notification on success or failure
+- Uses Finder as a fallback for all file operations — avoids macOS TCC (Privacy) blocks that affect launchd agents running directly as `/bin/zsh`
 
 ### Requirements
 
-- macOS (uses `osascript` for notifications)
+- macOS (uses `osascript` and Finder for file operations and notifications)
 - zsh (default shell on macOS Catalina and later)
 - Homebrew — `install.sh` installs it automatically if missing (supports both Intel and Apple Silicon)
+
+### First-run permission prompt
+
+The first time the agent moves a screenshot, macOS may show:
+
+> *"zsh would like to control Finder"*
+
+Click **OK**. This is a one-time Automation permission that allows the agent to instruct Finder to move files. It will not appear again.
+
+**Why Finder?** macOS TCC (Transparency, Consent, and Control) blocks direct `mv` operations on `~/Desktop` and `~/Pictures` for launchd background agents. Granting Full Disk Access to `/bin/zsh` does not solve this because macOS ignores per-binary TCC grants for SIP-protected system binaries. Having Finder perform the actual move sidesteps this entirely — Finder has its own full filesystem access.
 
 ### How install.sh works
 
@@ -85,6 +96,10 @@ Look for `state = running` and `last exit code = (never exited)`. If it shows `l
 **"fswatch not found" in the error log**
 
 The launchd agent is not finding `fswatch` because `PATH` is not set correctly in the plist. Re-run `./install.sh` — it now resolves the full path to `fswatch` at install time and writes it into the plist automatically.
+
+**"Could not move" notification / `Operation not permitted` in error log**
+
+macOS TCC is blocking direct file access. The script uses Finder as a fallback automatically, but Finder needs Automation permission first. Go to **System Settings → Privacy & Security → Automation** and make sure `zsh` has permission to control Finder. If the entry is missing, take a screenshot — macOS will show a one-time prompt to grant it.
 
 **Agent keeps restarting**
 
